@@ -1,0 +1,338 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Standard Normal Distribution Explorer</title>
+<style>
+:root{
+  --bg:#ffffff;
+  --text:#222a3a;
+  --muted:#64718a;
+  --border:#dbe3ef;
+  --axis:#8997ac;
+  --grid:#e7edf5;
+  --curve:#2f72d6;
+  --shade:#f4ab4a;
+  --shade-stroke:#db842d;
+  --panel:#f8fbff;
+  --label:#925018;
+}
+*{box-sizing:border-box}
+body{
+  margin:0;
+  background:var(--bg);
+  color:var(--text);
+  font-family:Inter,system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;
+  padding:24px;
+}
+main{
+  max-width:920px;
+  margin:0 auto;
+  border:1px solid var(--border);
+  border-radius:18px;
+  padding:22px 22px 18px;
+  background:#fff;
+}
+.header{
+  display:flex;
+  align-items:flex-start;
+  justify-content:space-between;
+  gap:18px;
+  flex-wrap:wrap;
+  margin-bottom:8px;
+}
+h1{
+  margin:0;
+  font-size:clamp(1.35rem,3vw,1.8rem);
+}
+.sub{
+  margin:6px 0 0;
+  color:var(--muted);
+  font-size:.95rem;
+}
+.tools{
+  display:flex;
+  flex-direction:column;
+  align-items:flex-end;
+  gap:10px;
+  min-width:min(100%,360px);
+}
+.checks{
+  display:flex;
+  flex-wrap:wrap;
+  justify-content:flex-end;
+  gap:14px;
+}
+.checks label{
+  display:flex;
+  align-items:center;
+  gap:8px;
+  font-size:.94rem;
+  color:var(--text);
+  white-space:nowrap;
+}
+.checks input{accent-color:var(--curve); width:16px; height:16px;}
+.readout{
+  display:flex;
+  align-items:center;
+  gap:10px;
+  flex-wrap:wrap;
+  justify-content:flex-end;
+  min-height:40px;
+}
+.pill{
+  background:var(--panel);
+  border:1px solid #d8e6ff;
+  border-radius:999px;
+  padding:8px 12px;
+  color:#35568e;
+  font-size:.97rem;
+  font-weight:600;
+  font-variant-numeric:tabular-nums;
+}
+.visual{width:100%;display:block;overflow:visible}
+.gridline{stroke:var(--grid);stroke-width:1}
+.axis{stroke:var(--axis);stroke-width:1.15}
+.curve{fill:none;stroke:var(--curve);stroke-width:2.8}
+.area{fill:var(--shade);opacity:.56}
+.cut{stroke:var(--shade-stroke);stroke-width:1.8;stroke-dasharray:5 4}
+.tick{fill:var(--muted);font-size:12px}
+.tickLabel{fill:var(--muted);font-size:12px}
+.axisTitle{fill:var(--muted);font-size:14px;font-weight:600}
+.handleLine{stroke:var(--shade-stroke);stroke-width:2}
+.handle{fill:var(--shade-stroke);stroke:#fff;stroke-width:2.5;cursor:grab}
+.handle.active{cursor:grabbing}
+.boundText{fill:var(--label);font-size:13px;font-weight:700}
+.help{
+  margin:6px 0 0;
+  color:var(--muted);
+  font-size:.84rem;
+}
+.hidden{display:none}
+@media (max-width:700px){
+  body{padding:10px}
+  main{padding:16px}
+  .tools{align-items:flex-start;min-width:100%}
+  .checks,.readout{justify-content:flex-start}
+}
+</style>
+</head>
+<body>
+<main>
+  <div class="header">
+    <div>
+      <h1>Standard Normal Distribution</h1>
+      <p class="sub">Drag the two boundary points on the x-axis to shade the area under the curve.</p>
+    </div>
+    <div class="tools">
+      <div class="checks">
+        <label><input id="toggleZ" type="checkbox" checked> Show z-scores</label>
+        <label><input id="toggleP" type="checkbox" checked> Show percentage</label>
+      </div>
+      <div class="readout">
+        <div id="probPill" class="pill">P(−1.00 ≤ Z ≤ 1.00) = 68.3%</div>
+      </div>
+    </div>
+  </div>
+
+  <svg id="graph" class="visual" viewBox="0 0 820 390" role="img" aria-label="Standard normal curve with draggable left and right boundary points on the x-axis">
+    <g id="grid"></g>
+    <path id="shade" class="area"></path>
+    <path id="curve" class="curve"></path>
+    <g id="guides"></g>
+    <g id="handles"></g>
+    <g id="ticks"></g>
+  </svg>
+  <p class="help">The x-axis shows z-scores from −4 to 4. The shaded region represents the probability between the two selected z-scores.</p>
+</main>
+
+<script>
+(()=>{
+  const svg = document.getElementById('graph');
+  const grid = document.getElementById('grid');
+  const ticks = document.getElementById('ticks');
+  const guides = document.getElementById('guides');
+  const handlesG = document.getElementById('handles');
+  const shade = document.getElementById('shade');
+  const curve = document.getElementById('curve');
+  const pill = document.getElementById('probPill');
+  const toggleZ = document.getElementById('toggleZ');
+  const toggleP = document.getElementById('toggleP');
+
+  const leftPad = 62, rightPad = 34, axisY = 312, topPad = 26;
+  const plotW = 820 - leftPad - rightPad;
+  const scaleX = z => leftPad + ((z + 4) / 8) * plotW;
+  const unscaleX = x => ((x - leftPad) / plotW) * 8 - 4;
+  const pdf = z => Math.exp(-z*z/2)/Math.sqrt(2*Math.PI);
+  const scaleY = y => axisY - y * 670;
+  const fmt = z => (z < 0 ? '−' : '') + Math.abs(z).toFixed(2);
+  const pct = p => p.toFixed(1) + '%';
+  function erf(x){
+    const sign = x < 0 ? -1 : 1;
+    const a = Math.abs(x);
+    const t = 1 / (1 + 0.3275911 * a);
+    const y = 1 - (((((1.061405429 * t - 1.453152027) * t) + 1.421413741) * t - 0.284496736) * t + 0.254829592) * t * Math.exp(-a*a);
+    return sign * y;
+  }
+  const cdf = z => (1 + erf(z / Math.SQRT2)) / 2;
+
+  let leftZ = -1;
+  let rightZ = 1;
+  let dragging = null;
+
+  const ns = 'http://www.w3.org/2000/svg';
+  function make(tag, attrs={}, text=''){
+    const el = document.createElementNS(ns, tag);
+    for (const [k,v] of Object.entries(attrs)) el.setAttribute(k,v);
+    if (text !== undefined && text !== null) el.textContent = text;
+    return el;
+  }
+
+  function path(a,b){
+    const n = Math.max(2, Math.round((b-a)*90));
+    const parts = [];
+    for(let i=0;i<=n;i++){
+      const z = a + (b-a)*i/n;
+      parts.push((i===0?'M':'L') + scaleX(z).toFixed(2) + ' ' + scaleY(pdf(z)).toFixed(2));
+    }
+    return parts.join(' ');
+  }
+
+  function drawBase(){
+    [0,0.1,0.2,0.3,0.4].forEach(v=>{
+      grid.append(make('line',{x1:leftPad,x2:820-rightPad,y1:scaleY(v),y2:scaleY(v),class:'gridline'}));
+      ticks.append(make('text',{x:leftPad-12,y:scaleY(v)+4,'text-anchor':'end',class:'tick'},v.toFixed(1)));
+    });
+
+    ticks.append(make('line',{x1:leftPad,x2:820-rightPad,y1:axisY,y2:axisY,class:'axis'}));
+    ticks.append(make('line',{x1:leftPad,x2:leftPad,y1:topPad,y2:axisY,class:'axis'}));
+
+    for(let z=-4; z<=4; z++){
+      const x = scaleX(z);
+      ticks.append(make('line',{x1:x,x2:x,y1:axisY,y2:axisY+6,class:'axis'}));
+      ticks.append(make('text',{x,y:axisY+22,'text-anchor':'middle',class:'tickLabel'}, String(z)));
+    }
+
+    ticks.append(make('text',{x:(leftPad + (820-rightPad))/2,y:370,'text-anchor':'middle',class:'axisTitle'}, 'Z-score'));
+    const yTitle = make('text',{x:18,y:175,'text-anchor':'middle',class:'axisTitle',transform:'rotate(-90 18 175)'},'Probability density');
+    ticks.append(yTitle);
+
+    curve.setAttribute('d', path(-4,4));
+  }
+
+  function redraw(){
+    shade.setAttribute('d', path(leftZ, rightZ) + ` L${scaleX(rightZ)} ${axisY} L${scaleX(leftZ)} ${axisY} Z`);
+    guides.replaceChildren();
+    handlesG.replaceChildren();
+
+    const bounds = [
+      {id:'left', z:leftZ, label:'Left z = ' + fmt(leftZ), anchor:'end', dx:-10},
+      {id:'right', z:rightZ, label:'Right z = ' + fmt(rightZ), anchor:'start', dx:10}
+    ];
+
+    for(const b of bounds){
+      const x = scaleX(b.z);
+      const yCurve = scaleY(pdf(b.z));
+
+      guides.append(make('line',{x1:x,x2:x,y1:yCurve,y2:axisY,class:'cut'}));
+
+      if(toggleZ.checked){
+        const labelY = axisY - 16;
+        const textX = Math.max(leftPad + 26, Math.min(820-rightPad-26, x + b.dx));
+        guides.append(make('text',{
+          x:textX,
+          y:labelY,
+          'text-anchor':b.anchor,
+          class:'boundText'
+        }, b.label));
+      }
+
+      const handle = make('circle',{
+        cx:x,
+        cy:axisY,
+        r:8,
+        class:'handle',
+        'data-id':b.id,
+        tabindex:'0',
+        role:'slider',
+        'aria-label': b.id === 'left' ? 'Left boundary z-score' : 'Right boundary z-score',
+        'aria-valuemin':'-4',
+        'aria-valuemax':'4',
+        'aria-valuenow': b.z.toFixed(2)
+      });
+      handlesG.append(handle);
+    }
+
+    const prob = (cdf(rightZ)-cdf(leftZ))*100;
+    pill.textContent = `P(${fmt(leftZ)} ≤ Z ≤ ${fmt(rightZ)}) = ${pct(prob)}`;
+    pill.classList.toggle('hidden', !toggleP.checked);
+  }
+
+  function setZ(which, z){
+    z = Math.max(-4, Math.min(4, z));
+    z = Math.round(z * 100) / 100;
+    if(which === 'left'){
+      leftZ = Math.min(z, rightZ);
+    }else{
+      rightZ = Math.max(z, leftZ);
+    }
+    redraw();
+  }
+
+  function pointerToLocal(evt){
+    const pt = svg.createSVGPoint();
+    pt.x = evt.clientX; pt.y = evt.clientY;
+    return pt.matrixTransform(svg.getScreenCTM().inverse());
+  }
+
+  svg.addEventListener('pointerdown', evt => {
+    const t = evt.target;
+    if(!(t instanceof SVGElement) || !t.classList.contains('handle')) return;
+    dragging = t.dataset.id;
+    t.classList.add('active');
+    t.setPointerCapture(evt.pointerId);
+  });
+
+  svg.addEventListener('pointermove', evt => {
+    if(!dragging) return;
+    const p = pointerToLocal(evt);
+    const z = unscaleX(p.x);
+    setZ(dragging, z);
+  });
+
+  function endDrag(evt){
+    if(!dragging) return;
+    const active = handlesG.querySelector('.handle.active');
+    if(active) active.classList.remove('active');
+    dragging = null;
+  }
+  svg.addEventListener('pointerup', endDrag);
+  svg.addEventListener('pointercancel', endDrag);
+  svg.addEventListener('pointerleave', evt => {
+    if(dragging && evt.buttons === 0) endDrag(evt);
+  });
+
+  handlesG.addEventListener('keydown', evt => {
+    const t = evt.target;
+    if(!(t instanceof SVGElement) || !t.classList.contains('handle')) return;
+    const which = t.dataset.id;
+    let step = evt.shiftKey ? 0.10 : 0.01;
+    if(evt.key === 'ArrowLeft' || evt.key === 'ArrowDown'){
+      evt.preventDefault();
+      setZ(which, (which === 'left' ? leftZ : rightZ) - step);
+    } else if(evt.key === 'ArrowRight' || evt.key === 'ArrowUp'){
+      evt.preventDefault();
+      setZ(which, (which === 'left' ? leftZ : rightZ) + step);
+    }
+  });
+
+  toggleZ.addEventListener('change', redraw);
+  toggleP.addEventListener('change', redraw);
+
+  drawBase();
+  redraw();
+})();
+</script>
+</body>
+</html>
